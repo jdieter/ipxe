@@ -60,6 +60,8 @@ FILE_LICENCE ( GPL2_OR_LATER );
 #define CONSOLE_EFI ( CONSOLE_USAGE_ALL & ~CONSOLE_USAGE_LOG )
 #endif
 
+EFI_INPUT_KEY key;
+
 /** Current character attribute */
 static unsigned int efi_attr = ATTR_DEFAULT;
 
@@ -277,22 +279,13 @@ static const char * scancode_to_ansi_seq ( unsigned int scancode ) {
  * @ret character	Character read from console
  */
 static int efi_getchar ( void ) {
-	EFI_SIMPLE_TEXT_INPUT_PROTOCOL *conin = efi_systab->ConIn;
 	const char *ansi_seq;
-	EFI_INPUT_KEY key;
-	EFI_STATUS efirc;
-	int rc;
 
 	/* If we are mid-sequence, pass out the next byte */
 	if ( *ansi_input )
 		return *(ansi_input++);
 
-	/* Read key from real EFI console */
-	if ( ( efirc = conin->ReadKeyStroke ( conin, &key ) ) != 0 ) {
-		rc = -EEFI ( efirc );
-		DBG ( "EFI could not read keystroke: %s\n", strerror ( rc ) );
-		return 0;
-	}
+	/* Read key from key buffer */
 	DBG2 ( "EFI read key stroke with unicode %04x scancode %04x\n",
 	       key.UnicodeChar, key.ScanCode );
 
@@ -317,19 +310,24 @@ static int efi_getchar ( void ) {
  * @ret False		No character available to read
  */
 static int efi_iskey ( void ) {
-	EFI_BOOT_SERVICES *bs = efi_systab->BootServices;
 	EFI_SIMPLE_TEXT_INPUT_PROTOCOL *conin = efi_systab->ConIn;
 	EFI_STATUS efirc;
+	int rc;
 
 	/* If we are mid-sequence, we are always ready */
 	if ( *ansi_input )
 		return 1;
 
-	/* Check to see if the WaitForKey event has fired */
-	if ( ( efirc = bs->CheckEvent ( conin->WaitForKey ) ) == 0 )
-		return 1;
+	if ( ( efirc = conin->ReadKeyStroke ( conin, &key ) ) == EFI_NOT_READY )
+		return 0;
 
-	return 0;
+	if ( efirc != 0 ) {
+		rc = -EEFI ( efirc );
+		DBG ( "EFI could not read keystroke: %s\n", strerror ( rc ) );
+		return 0;
+	}
+
+	return 1;
 }
 
 /** EFI console driver */
