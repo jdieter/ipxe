@@ -61,6 +61,7 @@ FILE_LICENCE ( GPL2_OR_LATER );
 #endif
 
 EFI_INPUT_KEY key;
+int got_key;
 
 /** Current character attribute */
 static unsigned int efi_attr = ATTR_DEFAULT;
@@ -274,6 +275,35 @@ static const char * scancode_to_ansi_seq ( unsigned int scancode ) {
 }
 
 /**
+ * Get keypress from EFI console
+ *
+ * @v wait	1 to wait for key press, 0 not to
+ * @ret int	1 if we got a key press, 0 if not
+ */
+
+static int efi_getkey_from_console ( int wait ) {
+	EFI_SIMPLE_TEXT_INPUT_PROTOCOL *conin = efi_systab->ConIn;
+	EFI_STATUS efirc;
+	int rc;
+
+	/* Loop until we get a key press, unless wait is false */
+	while ( ( efirc = conin->ReadKeyStroke ( conin, &key ) ) == EFI_NOT_READY ) {
+		if ( wait == 0 )
+			return 0;
+	}
+
+	if ( efirc != 0 ) {
+		rc = -EEFI ( efirc );
+		DBG ( "EFI could not read keystroke: %s\n", strerror ( rc ) );
+		return 0;
+	}
+
+	/* Set flag showing we have stored a key press */
+	got_key = 1;
+	return 1;
+}
+
+/**
  * Get character from EFI console
  *
  * @ret character	Character read from console
@@ -284,6 +314,13 @@ static int efi_getchar ( void ) {
 	/* If we are mid-sequence, pass out the next byte */
 	if ( *ansi_input )
 		return *(ansi_input++);
+
+	/* If no keypress is stored, get next key press */
+	if ( !got_key && !efi_getkey_from_console( 1 ) )
+		return 0;
+
+	/* We're using current key press, so reset stored key press flag */
+	got_key = 0;
 
 	/* Read key from key buffer */
 	DBG2 ( "EFI read key stroke with unicode %04x scancode %04x\n",
@@ -310,24 +347,12 @@ static int efi_getchar ( void ) {
  * @ret False		No character available to read
  */
 static int efi_iskey ( void ) {
-	EFI_SIMPLE_TEXT_INPUT_PROTOCOL *conin = efi_systab->ConIn;
-	EFI_STATUS efirc;
-	int rc;
-
 	/* If we are mid-sequence, we are always ready */
 	if ( *ansi_input )
 		return 1;
 
-	if ( ( efirc = conin->ReadKeyStroke ( conin, &key ) ) == EFI_NOT_READY )
-		return 0;
-
-	if ( efirc != 0 ) {
-		rc = -EEFI ( efirc );
-		DBG ( "EFI could not read keystroke: %s\n", strerror ( rc ) );
-		return 0;
-	}
-
-	return 1;
+	/* Get key from EFI console without waiting */
+	return efi_getkey_from_console( 0 );
 }
 
 /** EFI console driver */
@@ -344,6 +369,8 @@ struct console_driver efi_console __console_driver = {
  */
 static void efi_console_init ( void ) {
 	EFI_CONSOLE_CONTROL_SCREEN_MODE mode;
+
+	got_key = 0;
 
 	/* On some older EFI 1.10 implementations, we must use the
 	 * (now obsolete) EFI_CONSOLE_CONTROL_PROTOCOL to switch the
