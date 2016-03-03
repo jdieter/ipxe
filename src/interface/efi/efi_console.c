@@ -351,6 +351,10 @@ static int efi_iskey ( void ) {
 	if ( *ansi_input )
 		return 1;
 
+	/* We already know there's a key waiting */
+	if ( got_key )
+		return 1;
+
 	/* Get key from EFI console without waiting */
 	return efi_getkey_from_console( 0 );
 }
